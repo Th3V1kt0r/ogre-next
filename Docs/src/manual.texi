@@ -847,7 +847,7 @@ Default: alpha_rejection always_pass@*@*
 
 Sets whether this pass will use 'alpha to coverage', a way to multisample alpha texture edges so they blend more seamlessly with the background. This facility is typically only available on cards from around 2006 onwards, but it is safe to enable it anyway - Ogre will just ignore it if the hardware does not support it. The common use for alpha to coverage is foliage rendering and chain-link fence style textures. @*@*
 
-Format: alpha_to_coverage <on|off>@*@*
+Format: alpha_to_coverage <on|off|\"msaa_only\">@*@*
 
 Default: alpha_to_coverage off@*@*
 @anchor{light_scissor}
@@ -1983,12 +1983,6 @@ Note that ALL submeshes must be assigned a material which implements this, and t
 If your vertex program makes use of @ref{Vertex Texture Fetch}, you should declare that with the 'uses_vertex_texture_fetch' directive. This is enough to tell Ogre that your program uses this feature and that hardware support for it should be checked.
 @example
 	uses_vertex_texture_fetch true
-@end example
-	
-@subheading Adjacency information in Geometry Programs
-Some geometry programs require adjacency information from the geometry. It means that a geometry shader doesn't only get the information of the primitive it operates on, it also has access to its neighbours (in the case of lines or triangles). This directive will tell Ogre to send the information to the geometry shader.
-@example
-	uses_adjacency_information true
 @end example
 	
 @subheading Vertex Programs With Shadows

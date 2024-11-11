@@ -95,6 +95,7 @@ namespace Ogre
         VkInstance          mInstance;
         VkPhysicalDevice    mPhysicalDevice;
         VkDevice            mDevice;
+        VkPipelineCache     mPipelineCache;
 
         VkQueue             mPresentQueue;
         /// Graphics queue is *guaranteed by spec* to also be able to run compute and transfer
@@ -134,7 +135,7 @@ namespace Ogre
                                     FastArray<VkDeviceQueueCreateInfo> &outQueueCiArray );
 
     public:
-        VulkanDevice( VkInstance instance, uint32 deviceIdx, VulkanRenderSystem *renderSystem );
+        VulkanDevice( VkInstance instance, const String &deviceName, VulkanRenderSystem *renderSystem );
         VulkanDevice( VkInstance instance, const VulkanExternalDevice &externalDevice,
                       VulkanRenderSystem *renderSystem );
         ~VulkanDevice();
@@ -152,7 +153,7 @@ namespace Ogre
         static void addExternalInstanceExtensions( FastArray<VkExtensionProperties> &extensions );
 
     protected:
-        void createPhysicalDevice( uint32 deviceIdx );
+        void createPhysicalDevice( const String &deviceName );
 
     public:
         void createDevice( FastArray<const char *> &extensions, uint32 maxComputeQueues,

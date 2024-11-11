@@ -2197,10 +2197,12 @@ namespace Ogre
         }
 
         const bool useTesselation = (bool)block->tesselationDomainShader;
-        const bool useAdjacency =
-            block->geometryShader && block->geometryShader->isAdjacencyInfoRequired();
 
-        switch( block->operationType )
+        int operationType = block->operationType;
+        if( block->geometryShader && block->geometryShader->isAdjacencyInfoRequired() )
+            operationType |= OT_DETAIL_ADJACENCY_BIT;
+
+        switch( operationType )
         {
         case OT_POINT_LIST:
             pso->topology = D3D11_PRIMITIVE_TOPOLOGY_POINTLIST;
@@ -2208,35 +2210,51 @@ namespace Ogre
         case OT_LINE_LIST:
             if( useTesselation )
                 pso->topology = D3D11_PRIMITIVE_TOPOLOGY_2_CONTROL_POINT_PATCHLIST;
-            else if( useAdjacency )
-                pso->topology = D3D11_PRIMITIVE_TOPOLOGY_LINELIST_ADJ;
             else
                 pso->topology = D3D11_PRIMITIVE_TOPOLOGY_LINELIST;
+            break;
+        case OT_LINE_LIST_ADJ:
+            if( useTesselation )
+                pso->topology = D3D11_PRIMITIVE_TOPOLOGY_2_CONTROL_POINT_PATCHLIST;
+            else
+                pso->topology = D3D11_PRIMITIVE_TOPOLOGY_LINELIST_ADJ;
             break;
         case OT_LINE_STRIP:
             if( useTesselation )
                 pso->topology = D3D11_PRIMITIVE_TOPOLOGY_2_CONTROL_POINT_PATCHLIST;
-            else if( useAdjacency )
-                pso->topology = D3D11_PRIMITIVE_TOPOLOGY_LINESTRIP_ADJ;
             else
                 pso->topology = D3D11_PRIMITIVE_TOPOLOGY_LINESTRIP;
+            break;
+        case OT_LINE_STRIP_ADJ:
+            if( useTesselation )
+                pso->topology = D3D11_PRIMITIVE_TOPOLOGY_2_CONTROL_POINT_PATCHLIST;
+            else
+                pso->topology = D3D11_PRIMITIVE_TOPOLOGY_LINESTRIP_ADJ;
             break;
         default:
         case OT_TRIANGLE_LIST:
             if( useTesselation )
                 pso->topology = D3D11_PRIMITIVE_TOPOLOGY_3_CONTROL_POINT_PATCHLIST;
-            else if( useAdjacency )
-                pso->topology = D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST_ADJ;
             else
                 pso->topology = D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST;
+            break;
+        case OT_TRIANGLE_LIST_ADJ:
+            if( useTesselation )
+                pso->topology = D3D11_PRIMITIVE_TOPOLOGY_3_CONTROL_POINT_PATCHLIST;
+            else
+                pso->topology = D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST_ADJ;
             break;
         case OT_TRIANGLE_STRIP:
             if( useTesselation )
                 pso->topology = D3D11_PRIMITIVE_TOPOLOGY_3_CONTROL_POINT_PATCHLIST;
-            else if( useAdjacency )
-                pso->topology = D3D11_PRIMITIVE_TOPOLOGY_TRIANGLESTRIP_ADJ;
             else
                 pso->topology = D3D11_PRIMITIVE_TOPOLOGY_TRIANGLESTRIP;
+            break;
+        case OT_TRIANGLE_STRIP_ADJ:
+            if( useTesselation )
+                pso->topology = D3D11_PRIMITIVE_TOPOLOGY_3_CONTROL_POINT_PATCHLIST;
+            else
+                pso->topology = D3D11_PRIMITIVE_TOPOLOGY_TRIANGLESTRIP_ADJ;
             break;
         case OT_TRIANGLE_FAN:
             pso->topology = D3D11_PRIMITIVE_TOPOLOGY_UNDEFINED;
@@ -2313,6 +2331,18 @@ namespace Ogre
             }
         }
 
+        try
+        {
+            createBlendState( block->blendblock, block->pass.sampleDescription.isMultisample(),
+                              pso->blendState );
+        }
+        catch( Exception & )
+        {
+            delete pso;
+            pso = 0;
+            throw;
+        }
+
         block->rsData = pso;
     }
     //---------------------------------------------------------------------
@@ -2382,7 +2412,8 @@ namespace Ogre
         block->mRsData = 0;
     }
     //---------------------------------------------------------------------
-    void D3D11RenderSystem::_hlmsBlendblockCreated( HlmsBlendblock *newBlock )
+    void D3D11RenderSystem::createBlendState( const HlmsBlendblock *newBlock, const bool bIsMultisample,
+                                              ComPtr<ID3D11BlendState> &outBlendblock )
     {
         D3D11_BLEND_DESC blendDesc;
         ZeroMemory( &blendDesc, sizeof( D3D11_BLEND_DESC ) );
@@ -2448,27 +2479,22 @@ namespace Ogre
         if( mFeatureLevel < D3D_FEATURE_LEVEL_10_0 )
             blendDesc.AlphaToCoverageEnable = false;
         else
-            blendDesc.AlphaToCoverageEnable = newBlock->mAlphaToCoverageEnabled;
+        {
+            blendDesc.AlphaToCoverageEnable =
+                newBlock->mAlphaToCoverage == HlmsBlendblock::A2cEnabled ||
+                ( newBlock->mAlphaToCoverage == HlmsBlendblock::A2cEnabledMsaaOnly && bIsMultisample );
+        }
 
         ID3D11BlendState *blendState = 0;
 
-        HRESULT hr = mDevice->CreateBlendState( &blendDesc, &blendState );
+        HRESULT hr = mDevice->CreateBlendState( &blendDesc, outBlendblock.GetAddressOf() );
         if( FAILED( hr ) )
         {
             String errorDescription = mDevice.getErrorDescription( hr );
             OGRE_EXCEPT_EX( Exception::ERR_RENDERINGAPI_ERROR, hr,
                             "Failed to create blend state\nError Description: " + errorDescription,
-                            "D3D11RenderSystem::_hlmsBlendblockCreated" );
+                            "D3D11RenderSystem::createBlendState" );
         }
-
-        newBlock->mRsData = blendState;
-    }
-    //---------------------------------------------------------------------
-    void D3D11RenderSystem::_hlmsBlendblockDestroyed( HlmsBlendblock *block )
-    {
-        ID3D11BlendState *blendState = reinterpret_cast<ID3D11BlendState *>( block->mRsData );
-        blendState->Release();
-        block->mRsData = 0;
     }
     //---------------------------------------------------------------------
     void D3D11RenderSystem::_hlmsSamplerblockCreated( HlmsSamplerblock *newBlock )
@@ -2660,15 +2686,10 @@ namespace Ogre
         }
     }
     //---------------------------------------------------------------------
-    void D3D11RenderSystem::_setHlmsBlendblock( const HlmsBlendblock *blendblock )
+    void D3D11RenderSystem::_setHlmsBlendblock( ComPtr<ID3D11BlendState> blendState )
     {
-        assert( blendblock->mRsData &&
-                "The block must have been created via HlmsManager::getBlendblock!" );
-
-        ID3D11BlendState *blendState = reinterpret_cast<ID3D11BlendState *>( blendblock->mRsData );
-
         // TODO - Add this functionality to Ogre (what's the GL equivalent?)
-        mDevice.GetImmediateContext()->OMSetBlendState( blendState, 0, 0xffffffff );
+        mDevice.GetImmediateContext()->OMSetBlendState( blendState.Get(), 0, 0xffffffff );
         if( mDevice.isError() )
         {
             String errorDescription = mDevice.getErrorDescription();
@@ -2722,10 +2743,10 @@ namespace Ogre
         if( !pso )
             return;
 
-        _setHlmsMacroblock( pso->macroblock );
-        _setHlmsBlendblock( pso->blendblock );
-
         D3D11HlmsPso *d3dPso = reinterpret_cast<D3D11HlmsPso *>( pso->rsData );
+
+        _setHlmsMacroblock( pso->macroblock );
+        _setHlmsBlendblock( d3dPso->blendState );
 
         mPso = d3dPso;
 
@@ -2966,9 +2987,14 @@ namespace Ogre
         else
         {
             // rendering without tessellation.
-            bool useAdjacency = ( mGeometryProgramBound && mPso->geometryShader &&
-                                  mPso->geometryShader->isAdjacencyInfoRequired() );
-            switch( op.operationType )
+            int operationType = op.operationType;
+            if( mGeometryProgramBound && mPso->geometryShader &&
+                mPso->geometryShader->isAdjacencyInfoRequired() )
+            {
+                operationType |= OT_DETAIL_ADJACENCY_BIT;
+            }
+
+            switch( operationType )
             {
             case OT_POINT_LIST:
                 primType = D3D11_PRIMITIVE_TOPOLOGY_POINTLIST;
@@ -2977,31 +3003,53 @@ namespace Ogre
                 break;
 
             case OT_LINE_LIST:
-                primType = useAdjacency ? D3D11_PRIMITIVE_TOPOLOGY_LINELIST_ADJ
-                                        : D3D11_PRIMITIVE_TOPOLOGY_LINELIST;
+                primType = D3D11_PRIMITIVE_TOPOLOGY_LINELIST;
                 primCount =
                     (DWORD)( op.useIndexes ? op.indexData->indexCount : op.vertexData->vertexCount ) / 2;
                 break;
 
+            case OT_LINE_LIST_ADJ:
+                primType = D3D11_PRIMITIVE_TOPOLOGY_LINELIST_ADJ;
+                primCount =
+                    (DWORD)( op.useIndexes ? op.indexData->indexCount : op.vertexData->vertexCount ) / 4;
+                break;
+
             case OT_LINE_STRIP:
-                primType = useAdjacency ? D3D11_PRIMITIVE_TOPOLOGY_LINESTRIP_ADJ
-                                        : D3D11_PRIMITIVE_TOPOLOGY_LINESTRIP;
+                primType = D3D11_PRIMITIVE_TOPOLOGY_LINESTRIP;
                 primCount =
                     (DWORD)( op.useIndexes ? op.indexData->indexCount : op.vertexData->vertexCount ) - 1;
                 break;
 
+            case OT_LINE_STRIP_ADJ:
+                primType = D3D11_PRIMITIVE_TOPOLOGY_LINESTRIP_ADJ;
+                primCount =
+                    (DWORD)( op.useIndexes ? op.indexData->indexCount : op.vertexData->vertexCount ) - 2;
+                break;
+
             case OT_TRIANGLE_LIST:
-                primType = useAdjacency ? D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST_ADJ
-                                        : D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST;
+                primType = D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST;
                 primCount =
                     (DWORD)( op.useIndexes ? op.indexData->indexCount : op.vertexData->vertexCount ) / 3;
                 break;
 
+            case OT_TRIANGLE_LIST_ADJ:
+                primType = D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST_ADJ;
+                primCount =
+                    (DWORD)( op.useIndexes ? op.indexData->indexCount : op.vertexData->vertexCount ) / 6;
+                break;
+
             case OT_TRIANGLE_STRIP:
-                primType = useAdjacency ? D3D11_PRIMITIVE_TOPOLOGY_TRIANGLESTRIP_ADJ
-                                        : D3D11_PRIMITIVE_TOPOLOGY_TRIANGLESTRIP;
+                primType = D3D11_PRIMITIVE_TOPOLOGY_TRIANGLESTRIP;
                 primCount =
                     (DWORD)( op.useIndexes ? op.indexData->indexCount : op.vertexData->vertexCount ) - 2;
+                break;
+
+            case OT_TRIANGLE_STRIP_ADJ:
+                primType = D3D11_PRIMITIVE_TOPOLOGY_TRIANGLESTRIP_ADJ;
+                primCount =
+                    (DWORD)( op.useIndexes ? op.indexData->indexCount : op.vertexData->vertexCount ) /
+                        2 -
+                    2;
                 break;
 
             case OT_TRIANGLE_FAN:
@@ -3659,11 +3707,9 @@ namespace Ogre
     //---------------------------------------------------------------------
     SampleDescription D3D11RenderSystem::validateSampleDescription( const SampleDescription &sampleDesc,
                                                                     PixelFormatGpu format,
-                                                                    uint32 textureFlags,
-                                                                    uint32 depthTextureFlags )
+                                                                    uint32 textureFlags )
     {
         OGRE_UNUSED_VAR( textureFlags );
-        OGRE_UNUSED_VAR( depthTextureFlags );
 
         SampleDescription res;
         DXGI_FORMAT dxgiFormat = D3D11Mappings::get( format );

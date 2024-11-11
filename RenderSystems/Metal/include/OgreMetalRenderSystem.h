@@ -157,7 +157,7 @@ namespace Ogre
         ConfigOptionMap &getConfigOptions() override { return mOptions; }
         void             setConfigOption( const String &name, const String &value ) override;
 
-        bool supportsMultithreadedShaderCompliation() const override;
+        bool supportsMultithreadedShaderCompilation() const override;
 
         HardwareOcclusionQuery *createHardwareOcclusionQuery() override;
 
@@ -297,8 +297,8 @@ namespace Ogre
         unsigned int getDisplayMonitorCount() const override { return 1; }
 
         SampleDescription validateSampleDescription( const SampleDescription &sampleDesc,
-                                                     PixelFormatGpu format, uint32 textureFlags,
-                                                     uint32 depthTextureFlags ) override;
+                                                     PixelFormatGpu           format,
+                                                     uint32                   textureFlags ) override;
 
         const PixelFormatToShaderType *getPixelFormatToShaderType() const override;
 

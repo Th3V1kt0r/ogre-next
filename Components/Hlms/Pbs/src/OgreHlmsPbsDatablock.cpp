@@ -839,7 +839,7 @@ namespace Ogre
             }
 
             if( newBlendblock != *mBlendblock[0] )
-                setBlendblock( newBlendblock );
+                setBlendblock( newBlendblock, false, false );
 
             if( mTransparencyMode == Refractive && mMacroblock[0]->mDepthWrite )
             {
@@ -858,12 +858,12 @@ namespace Ogre
                     "' disabling transparency but forcing a blendblock to"
                     " keep using alpha blending. Performance will be affected." );
             }
-            else if( mTransparencyMode != None && !mBlendblock[0]->mIsTransparent )
+            else if( mTransparencyMode != None && !mBlendblock[0]->mIsTransparent && !mAlphaHashing )
             {
                 LogManager::getSingleton().logMessage(
                     "WARNING: PBS Datablock '" + *getNameStr() +
-                    "' enabling transparency but forcing a blendblock to avoid"
-                    " alpha blending. Results may not look as expected." );
+                    "' enabling transparency but forcing a blendblock to avoid alpha blending "
+                    "(and alpha hashing is also disabled). Results may not look as expected." );
             }
         }
 

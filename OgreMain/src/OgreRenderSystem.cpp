@@ -811,8 +811,7 @@ namespace Ogre
     //-----------------------------------------------------------------------
     SampleDescription RenderSystem::validateSampleDescription( const SampleDescription &sampleDesc,
                                                                PixelFormatGpu format,
-                                                               uint32 textureFlags,
-                                                               uint32 depthTextureFlags )
+                                                               uint32 textureFlags )
     {
         SampleDescription retVal( sampleDesc.getMaxSamples(), sampleDesc.getMsaaPattern() );
         return retVal;
@@ -1116,6 +1115,12 @@ namespace Ogre
         case OT_TRIANGLE_FAN:
             mMetrics.mFaceCount += ( primCount - 2u );
             break;
+        case OT_TRIANGLE_LIST_ADJ:
+            mMetrics.mFaceCount += ( primCount / 6 );
+            break;
+        case OT_TRIANGLE_STRIP_ADJ:
+            mMetrics.mFaceCount += ( primCount / 2 - 2 );
+            break;
         default:
             break;
         }
@@ -1248,7 +1253,7 @@ namespace Ogre
     //-----------------------------------------------------------------------
     size_t RenderSystem::getNumPriorityConfigOptions() const { return 0u; }
     //-----------------------------------------------------------------------
-    bool RenderSystem::supportsMultithreadedShaderCompliation() const { return false; }
+    bool RenderSystem::supportsMultithreadedShaderCompilation() const { return false; }
     //-----------------------------------------------------------------------
     void RenderSystem::destroyHardwareOcclusionQuery( HardwareOcclusionQuery *hq )
     {
@@ -1366,6 +1371,10 @@ namespace Ogre
     {
         mGlobalInstanceVertexBufferVertexDeclaration = val;
     }
+    //---------------------------------------------------------------------
+    void RenderSystem::loadPipelineCache( DataStreamPtr stream ) {}
+    //---------------------------------------------------------------------
+    void RenderSystem::savePipelineCache( DataStreamPtr stream ) const {}
     //---------------------------------------------------------------------
     bool RenderSystem::startGpuDebuggerFrameCapture( Window *window )
     {

@@ -580,8 +580,11 @@ namespace Ogre
                         descBindingRanges[j + DescBindingTypes::ReadOnlyBuffer];
                     if( bindRanges.isInUse() )
                     {
-                        OGRE_ASSERT_MEDIUM( table.bakedDescriptorSets[j] &&
-                                            "No DescriptorSetTexture/Sampler/Uav bound when expected!" );
+                        OGRE_ASSERT_MEDIUM(
+                            table.bakedDescriptorSets[j] &&
+                            "No DescriptorSetTexture/Sampler/Uav bound when expected!\n"
+                            "Forgot a call to "
+                            "RenderSystem::_setTextures/_setTextures2/_setSamplers/etc?" );
                         OGRE_ASSERT_MEDIUM( table.bakedDescriptorSets[j]->descriptorCount ==
                                                 bindRanges.getNumUsedSlots() &&
                                             "DescriptorSetTexture/Sampler/Uav provided is incompatible "
@@ -608,7 +611,7 @@ namespace Ogre
         if( firstDirtySet < mSets.size() )
         {
             vkCmdBindDescriptorSets(
-                device->mGraphicsQueue.mCurrentCmdBuffer,
+                device->mGraphicsQueue.getCurrentCmdBuffer(),
                 mCompute ? VK_PIPELINE_BIND_POINT_COMPUTE : VK_PIPELINE_BIND_POINT_GRAPHICS, mRootLayout,
                 firstDirtySet, static_cast<uint32_t>( mSets.size() ) - firstDirtySet,
                 &descSets[firstDirtySet], 0u, 0 );

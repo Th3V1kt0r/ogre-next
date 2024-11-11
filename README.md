@@ -46,7 +46,7 @@ differences have diverged long enough.
 
  * Clang 3.3 or newer
  * GCC 5 or newer
- * VS2013 or newer
+ * VS2015 or newer
  
 ## Samples
 For a list of samples and their demonstrated features, refer to the [samples section in the manual.](https://ogrecave.github.io/ogre-next/api/latest/_samples.html) 
@@ -114,7 +114,7 @@ For a list of samples and their demonstrated features, refer to the [samples sec
 
 # Dependencies (Windows)
 
-* Visual Studio 2013 - 2019 (2022 not tested). MinGW may work but we strongly recommend Visual Studio.
+* Visual Studio 2015 - 2022. MinGW may work but we strongly recommend Visual Studio.
 * [DirectX June 2010 SDK](https://www.microsoft.com/en-us/download/details.aspx?id=6812). Optional. Comes with useful tools.
 * Windows 10 SDK. Contains the latest DirectX SDK, thus recommended over the DX June 2010 SDK,
   but you may still want to install the June 2010 SDK for those tools.
@@ -142,7 +142,8 @@ pacman -S freeimage freetype2 libxaw libxrandr mesa zziplib cmake gcc
 
 We provide quick download-build scripts under the [Scripts/BuildScripts/output](Scripts/BuildScripts/output) folder.
 
-You can download all of these scripts [as a compressed 7zip file](https://bintray.com/darksylinc/ogre-next/download_file?file_path=build_ogre_scripts-master.7z)
+You can download all of these scripts [as a compressed 7zip file](https://github.com/OGRECave/ogre-next/releases/download/bin-releases/build_ogre_scripts-master.7z).
+We also have an archive if you're looking for [scripts to build older versions](https://github.com/OGRECave/ogre-next/releases/bin-releases/).
 
 If you're on Linux, make sure to first install the dependencies (i.e. run the sudo apt-get above)
 
