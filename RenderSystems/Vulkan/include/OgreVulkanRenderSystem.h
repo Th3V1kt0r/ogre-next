@@ -33,6 +33,7 @@ THE SOFTWARE.
 
 #include "OgreHlmsPso.h"
 #include "OgreRenderSystem.h"
+#include "OgreVulkanDeviceResource.h"
 #include "OgreVulkanGlobalBindingTable.h"
 #include "OgreVulkanPixelFormatToShaderType.h"
 #include "OgreVulkanProgram.h"
@@ -50,18 +51,20 @@ namespace Ogre
     struct VulkanExternalInstance;
     struct VulkanHlmsPso;
     class VulkanSupport;
+    class VulkanInstance;
 
     struct VulkanPhysicalDevice
     {
         VkPhysicalDevice physicalDevice;
+        long long physicalDeviceID;
         String title;
     };
-    typedef std::vector<VulkanPhysicalDevice> VulkanPhysicalDeviceList;
 
     /**
        Implementation of Vulkan as a rendering system.
     */
-    class _OgreVulkanExport VulkanRenderSystem final : public RenderSystem
+    class _OgreVulkanExport VulkanRenderSystem final : public RenderSystem,
+                                                       protected VulkanDeviceResourceManager
     {
         bool mInitialized;
 #ifdef OGRE_VULKAN_USE_SWAPPY
@@ -80,10 +83,10 @@ namespace Ogre
         VulkanProgramFactory *mVulkanProgramFactory2;
         VulkanProgramFactory *mVulkanProgramFactory3;
 
-        VkInstance mVkInstance;
-        VulkanPhysicalDeviceList mVulkanPhysicalDeviceList;
-        VulkanSupport *mVulkanSupport;
+        std::shared_ptr<VulkanInstance> mInstance;
+        VulkanPhysicalDevice mActiveDevice;
 
+        VulkanSupport *mVulkanSupport;
         std::map<IdString, VulkanSupport *> mAvailableVulkanSupports;
 
         // TODO: AutoParamsBuffer probably belongs to MetalDevice (because it's per device?)
@@ -109,8 +112,6 @@ namespace Ogre
         uint32_t mStencilRefValue;
         bool mStencilEnabled;
 
-        bool mVkInstanceIsExternal;
-
         bool mTableDirty;
         bool mComputeTableDirty;
         VulkanGlobalBindingTable mGlobalTable;
@@ -133,23 +134,8 @@ namespace Ogre
 
         bool mValidationError;
 
-#if OGRE_DEBUG_MODE >= OGRE_DEBUG_HIGH
-        bool mHasValidationLayers;
-#endif
-
-        PFN_vkCreateDebugReportCallbackEXT CreateDebugReportCallback;
-        PFN_vkDestroyDebugReportCallbackEXT DestroyDebugReportCallback;
-        VkDebugReportCallbackEXT mDebugReportCallback;
-
-#if OGRE_DEBUG_MODE >= OGRE_DEBUG_MEDIUM
-        PFN_vkCmdBeginDebugUtilsLabelEXT CmdBeginDebugUtilsLabelEXT;
-        PFN_vkCmdEndDebugUtilsLabelEXT CmdEndDebugUtilsLabelEXT;
-#endif
-
         /// Declared here to avoid constant reallocations
         FastArray<VkImageMemoryBarrier> mImageBarriers;
-
-        void addInstanceDebugCallback();
 
         /// Creates a dummy VkRenderPass for use in PSO creation
         VkRenderPass getVkRenderPass( HlmsPassPso passPso, uint8 &outMrtCount );
@@ -162,6 +148,7 @@ namespace Ogre
         ~VulkanRenderSystem() override;
 
         void shutdown() override;
+        const FastArray<VulkanPhysicalDevice> &getVulkanPhysicalDevices() const;
 
         const String &getName() const override;
         const String &getFriendlyName() const override;
@@ -200,14 +187,6 @@ namespace Ogre
         void resetAllBindings();
 
         void reinitialise() override;
-
-        void initializeExternalVkInstance( VulkanExternalInstance *externalInstance );
-        void initializeVkInstance();
-
-        void sharedVkInitialization();
-
-        VkInstance getVkInstance() const { return mVkInstance; }
-        const VulkanPhysicalDeviceList &getVulkanPhysicalDevices( bool refreshList = false );
 
         Window *_initialise( bool autoCreateWindow,
                              const String &windowTitle = "OGRE Render Window" ) override;
