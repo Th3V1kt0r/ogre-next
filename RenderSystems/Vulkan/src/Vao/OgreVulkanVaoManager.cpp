@@ -42,6 +42,7 @@ THE SOFTWARE.
 #    include "Vao/OgreVulkanMultiSourceVertexBufferPool.h"
 #endif
 #include "Vao/OgreVulkanReadOnlyBufferPacked.h"
+#include "Vao/OgreVulkanReadOnlyTBufferWorkaround.h"
 #include "Vao/OgreVulkanStagingBuffer.h"
 #include "Vao/OgreVulkanTexBufferPacked.h"
 #include "Vao/OgreVulkanUavBufferPacked.h"
@@ -107,6 +108,22 @@ namespace Ogre
         mSupportsNonCoherentMemory( false ),
         mReadMemoryIsCoherent( false )
     {
+        if( params )
+        {
+            NameValuePairList::const_iterator itor =
+                params->find( "VaoManager::mDelayedBlocksFlushThreshold" );
+            if( itor != params->end() )
+            {
+                mDelayedBlocksFlushThreshold =
+                    StringConverter::parseSizeT( itor->second, mDelayedBlocksFlushThreshold );
+            }
+        }
+    }
+    //-----------------------------------------------------------------------------------
+    VulkanVaoManager::~VulkanVaoManager() { destroyVkResources( true ); }
+    //-----------------------------------------------------------------------------------
+    void VulkanVaoManager::createVkResources()
+    {
         mConstBufferAlignment =
             (uint32)mDevice->mDeviceProperties.limits.minUniformBufferOffsetAlignment;
         mTexBufferAlignment = (uint32)mDevice->mDeviceProperties.limits.minTexelBufferOffsetAlignment;
@@ -122,8 +139,8 @@ namespace Ogre
 #ifdef OGRE_VK_WORKAROUND_ADRENO_UBO64K
         Workarounds::mAdrenoUbo64kLimitTriggered = false;
         Workarounds::mAdrenoUbo64kLimit = 0u;
-        if( renderSystem->getCapabilities()->getVendor() == GPU_QUALCOMM &&
-            renderSystem->getCapabilities()->getDeviceName().find( "Turnip" ) == String::npos )
+        if( mVkRenderSystem->getCapabilities()->getVendor() == GPU_QUALCOMM &&
+            mVkRenderSystem->getCapabilities()->getDeviceName().find( "Turnip" ) == String::npos )
         {
             mConstBufferMaxSize =
                 std::min<size_t>( mConstBufferMaxSize, 64u * 1024u - mConstBufferAlignment );
@@ -136,8 +153,8 @@ namespace Ogre
 #endif
 
 #ifdef OGRE_VK_WORKAROUND_PVR_ALIGNMENT
-        if( renderSystem->getCapabilities()->getVendor() == GPU_IMGTEC &&
-            !renderSystem->getCapabilities()->getDriverVersion().hasMinVersion( 1, 426, 234 ) )
+        if( mVkRenderSystem->getCapabilities()->getVendor() == GPU_IMGTEC &&
+            !mVkRenderSystem->getCapabilities()->getDriverVersion().hasMinVersion( 1, 426, 234 ) )
         {
             Workarounds::mPowerVRAlignment = 16u;
 
@@ -159,6 +176,18 @@ namespace Ogre
         mReadOnlyIsTexBuffer = false;
         mReadOnlyBufferMaxSize = mUavBufferMaxSize;
 
+#ifdef OGRE_VK_WORKAROUND_ADRENO_6xx_READONLY_IS_TBUFFER
+        if( mVkRenderSystem->getCapabilities()->getVendor() == GPU_QUALCOMM &&
+            mVkRenderSystem->getCapabilities()->getDeviceId() >= 0x6000000 &&
+            mVkRenderSystem->getCapabilities()->getDeviceId() < 0x7000000 &&
+            mVkRenderSystem->getCapabilities()->getDeviceName().find( "Turnip" ) == String::npos )
+        {
+            Workarounds::mAdreno6xxReadOnlyIsTBuffer = true;
+            mReadOnlyIsTexBuffer = true;
+            mReadOnlyBufferMaxSize = mTexBufferMaxSize;
+        }
+#endif
+
         memset( mUsedHeapMemory, 0, sizeof( mUsedHeapMemory ) );
         memset( mMemoryTypesInUse, 0, sizeof( mMemoryTypesInUse ) );
 
@@ -179,107 +208,69 @@ namespace Ogre
 
         determineBestMemoryTypes();
 
-        if( params )
-        {
-            NameValuePairList::const_iterator itor =
-                params->find( "VaoManager::mDelayedBlocksFlushThreshold" );
-            if( itor != params->end() )
-            {
-                mDelayedBlocksFlushThreshold = static_cast<size_t>(
-                    StringConverter::parseUnsignedLong( itor->second, mDelayedBlocksFlushThreshold ) );
-            }
-        }
+        initDrawIdVertexBuffer();
     }
     //-----------------------------------------------------------------------------------
-    VulkanVaoManager::~VulkanVaoManager()
+    void VulkanVaoManager::destroyVkResources( bool finalDestruction )
     {
+        mDrawId = 0;
+
         destroyAllVertexArrayObjects();
         deleteAllBuffers();
 
-        {
-            VkSemaphoreArray::const_iterator itor = mAvailableSemaphores.begin();
-            VkSemaphoreArray::const_iterator endt = mAvailableSemaphores.end();
+        for( VkSemaphore sem : mAvailableSemaphores )
+            vkDestroySemaphore( mDevice->mDevice, sem, 0 );
+        mAvailableSemaphores.clear();
 
-            while( itor != endt )
-                vkDestroySemaphore( mDevice->mDevice, *itor++, 0 );
-        }
-        {
-            FastArray<UsedSemaphore>::const_iterator itor = mUsedSemaphores.begin();
-            FastArray<UsedSemaphore>::const_iterator endt = mUsedSemaphores.end();
-
-            while( itor != endt )
-            {
-                vkDestroySemaphore( mDevice->mDevice, itor->semaphore, 0 );
-                ++itor;
-            }
-        }
+        for( UsedSemaphore &sem : mUsedSemaphores )
+            vkDestroySemaphore( mDevice->mDevice, sem.semaphore, 0 );
+        mUsedSemaphores.clear();
 
         deleteStagingBuffers();
 
+        for( VulkanDelayedFuncBaseArray &fnFrame : mDelayedFuncs )
         {
-            FastArray<VulkanDelayedFuncBaseArray>::iterator itFrame = mDelayedFuncs.begin();
-            FastArray<VulkanDelayedFuncBaseArray>::iterator enFrame = mDelayedFuncs.end();
-
-            while( itFrame != enFrame )
+            for( VulkanDelayedFuncBase *fn : fnFrame )
             {
-                VulkanDelayedFuncBaseArray::const_iterator itor = itFrame->begin();
-                VulkanDelayedFuncBaseArray::const_iterator endt = itFrame->end();
-
-                while( itor != endt )
-                {
-                    ( *itor )->execute();
-                    delete *itor;
-                    ++itor;
-                }
-
-                itFrame->clear();
-                ++itFrame;
+                fn->execute();
+                delete fn;
             }
+            fnFrame.clear();
         }
+        // it's OK not to clear mDelayedFuncs
 
         flushAllGpuDelayedBlocks( false );
 
+        for( VulkanDescriptorPoolMap::value_type &pools : mDescriptorPools )
         {
-            VulkanDescriptorPoolMap::const_iterator itor = mDescriptorPools.begin();
-            VulkanDescriptorPoolMap::const_iterator endt = mDescriptorPools.end();
-
-            while( itor != endt )
+            for( VulkanDescriptorPool *pool : pools.second )
             {
-                FastArray<VulkanDescriptorPool *>::const_iterator itDescPool = itor->second.begin();
-                FastArray<VulkanDescriptorPool *>::const_iterator enDescPool = itor->second.end();
-
-                while( itDescPool != enDescPool )
-                {
-                    ( *itDescPool )->deinitialize( mDevice );
-                    delete *itDescPool;
-                    ++itDescPool;
-                }
-                ++itor;
+                pool->deinitialize( mDevice );
+                delete pool;
             }
-
-            mDescriptorPools.clear();
         }
+        mDescriptorPools.clear();
+
+        mUsedDescriptorPools.clear();
 
         mEmptyVboPools.clear();
 
         for( size_t i = 0; i < MAX_VBO_FLAG; ++i )
         {
-            VboVec::iterator itor = mVbos[i].begin();
-            VboVec::iterator endt = mVbos[i].end();
-
-            while( itor != endt )
+            for( Vbo &vbo : mVbos[i] )
             {
-                if( itor->isAllocated() )
+                if( vbo.isAllocated() )
                 {
-                    vkDestroyBuffer( mDevice->mDevice, itor->vkBuffer, 0 );
-                    vkFreeMemory( mDevice->mDevice, itor->vboName, 0 );
-
-                    itor->vboName = 0;
-                    delete itor->dynamicBuffer;
-                    itor->dynamicBuffer = 0;
+                    vkDestroyBuffer( mDevice->mDevice, vbo.vkBuffer, 0 );
+                    vbo.vkBuffer = 0;
+                    vkFreeMemory( mDevice->mDevice, vbo.vboName, 0 );
+                    vbo.vboName = 0;
+                    delete vbo.dynamicBuffer;
+                    vbo.dynamicBuffer = 0;
                 }
-                ++itor;
             }
+            mVbos[i].clear();
+            mUnallocatedVbos[i].clear();
         }
     }
     //-----------------------------------------------------------------------------------
@@ -487,7 +478,7 @@ namespace Ogre
     //-----------------------------------------------------------------------------------
     bool VulkanVaoManager::flushAllGpuDelayedBlocks( const bool bIssueBarrier )
     {
-        if( bIssueBarrier )
+        if( bIssueBarrier && !mDevice->isDeviceLost() )
         {
             if( mDevice->mGraphicsQueue.getEncoderState() == VulkanQueue::EncoderGraphicsOpen )
             {
@@ -749,7 +740,7 @@ namespace Ogre
                          VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_INDEX_BUFFER_BIT |
                          VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT;
         VkResult result = vkCreateBuffer( mDevice->mDevice, &bufferCi, 0, &tmpBuffer );
-        checkVkResult( result, "vkCreateBuffer" );
+        checkVkResult( mDevice, result, "vkCreateBuffer" );
 
         VkMemoryRequirements memRequirements;
         vkGetBufferMemoryRequirements( mDevice->mDevice, tmpBuffer, &memRequirements );
@@ -1118,7 +1109,7 @@ namespace Ogre
                 if( vboFlag == CPU_READ_WRITE )
                     bufferCi.usage = VK_BUFFER_USAGE_TRANSFER_SRC_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT;
                 VkResult result = vkCreateBuffer( mDevice->mDevice, &bufferCi, 0, &newVbo.vkBuffer );
-                checkVkResult( result, "vkCreateBuffer" );
+                checkVkResult( mDevice, result, "vkCreateBuffer" );
 
                 VkMemoryRequirements buffMemRequirements;
                 vkGetBufferMemoryRequirements( mDevice->mDevice, newVbo.vkBuffer, &buffMemRequirements );
@@ -1133,7 +1124,7 @@ namespace Ogre
             memAllocInfo.memoryTypeIndex = chosenMemoryTypeIdx;
 
             VkResult result = vkAllocateMemory( mDevice->mDevice, &memAllocInfo, NULL, &newVbo.vboName );
-            checkVkResult( result, "vkAllocateMemory" );
+            checkVkResult( mDevice, result, "vkAllocateMemory" );
 
             mUsedHeapMemory[memTypes[chosenMemoryTypeIdx].heapIndex] += poolSize;
 
@@ -1141,7 +1132,7 @@ namespace Ogre
             {
                 result =
                     vkBindBufferMemory( mDevice->mDevice, newVbo.vkBuffer, newVbo.vboName, buffOffset );
-                checkVkResult( result, "vkBindBufferMemory" );
+                checkVkResult( mDevice, result, "vkBindBufferMemory" );
             }
 
             newVbo.sizeBytes = usablePoolSize;
@@ -1595,8 +1586,15 @@ namespace Ogre
         size_t vboIdx;
         size_t bufferOffset;
 
+#ifdef OGRE_VK_WORKAROUND_ADRENO_6xx_READONLY_IS_TBUFFER
+        const size_t alignment =
+            Workarounds::mAdreno6xxReadOnlyIsTBuffer
+                ? mTexBufferAlignment
+                : Math::lcm( mUavBufferAlignment, PixelFormatGpuUtils::getBytesPerPixel( pixelFormat ) );
+#else
         const size_t alignment =
             Math::lcm( mUavBufferAlignment, PixelFormatGpuUtils::getBytesPerPixel( pixelFormat ) );
+#endif
         size_t requestedSize = sizeBytes;
 
         VboFlag vboFlag = bufferTypeToVboFlag( bufferType, false );
@@ -1616,9 +1614,25 @@ namespace Ogre
         VulkanBufferInterface *bufferInterface =
             new VulkanBufferInterface( vboIdx, vbo.vkBuffer, vbo.dynamicBuffer );
 
+#ifdef OGRE_VK_WORKAROUND_ADRENO_6xx_READONLY_IS_TBUFFER
+        ReadOnlyBufferPacked *retVal;
+        if( Workarounds::mAdreno6xxReadOnlyIsTBuffer )
+        {
+            retVal = OGRE_NEW VulkanReadOnlyTBufferWorkaround(
+                bufferOffset, requestedSize, 1u, (uint32)( sizeBytes - requestedSize ), bufferType,
+                initialData, keepAsShadow, mVkRenderSystem, this, bufferInterface, pixelFormat );
+        }
+        else
+        {
+            retVal = OGRE_NEW VulkanReadOnlyBufferPacked(
+                bufferOffset, requestedSize, 1u, (uint32)( sizeBytes - requestedSize ), bufferType,
+                initialData, keepAsShadow, mVkRenderSystem, this, bufferInterface, pixelFormat );
+        }
+#else
         VulkanReadOnlyBufferPacked *retVal = OGRE_NEW VulkanReadOnlyBufferPacked(
             bufferOffset, requestedSize, 1u, (uint32)( sizeBytes - requestedSize ), bufferType,
             initialData, keepAsShadow, mVkRenderSystem, this, bufferInterface, pixelFormat );
+#endif
 
         if( initialData )
             bufferInterface->_firstUpload( initialData, 0, requestedSize );
@@ -2146,7 +2160,7 @@ namespace Ogre
     }
     //-----------------------------------------------------------------------------------
     void VulkanVaoManager::getAvailableSemaphores( VkSemaphoreArray &semaphoreArray,
-                                                    size_t numSemaphores )
+                                                   size_t numSemaphores )
     {
         semaphoreArray.reserve( semaphoreArray.size() + numSemaphores );
 
@@ -2161,7 +2175,7 @@ namespace Ogre
                 VkSemaphore semaphore = 0;
                 const VkResult result =
                     vkCreateSemaphore( mDevice->mDevice, &semaphoreCreateInfo, 0, &semaphore );
-                checkVkResult( result, "vkCreateSemaphore" );
+                checkVkResult( mDevice, result, "vkCreateSemaphore" );
                 semaphoreArray.push_back( semaphore );
             }
 
@@ -2186,7 +2200,7 @@ namespace Ogre
 
             const VkResult result =
                 vkCreateSemaphore( mDevice->mDevice, &semaphoreCreateInfo, 0, &retVal );
-            checkVkResult( result, "vkCreateSemaphore" );
+            checkVkResult( mDevice, result, "vkCreateSemaphore" );
         }
         else
         {
@@ -2282,7 +2296,7 @@ namespace Ogre
 
         VkResult result = vkWaitForFences( queue->mDevice, 1u, &fenceName, VK_TRUE,
                                            UINT64_MAX );  // You can't wait forever in Vulkan?!?
-        checkVkResult( result, "VulkanStagingBuffer::wait" );
+        checkVkResult( queue->mOwnerDevice, result, "VulkanStagingBuffer::wait" );
         queue->releaseFence( fenceName );
         return 0;
     }
